@@ -8,7 +8,11 @@ def generate_graph(graph_type, n):
         return nx.complete_graph(n)
 
     elif graph_type == "erdos_renyi":
-        return nx.erdos_renyi_graph(n, p=0.2)
+        # ensure connectivity
+        while True:
+            G = nx.erdos_renyi_graph(n, p=0.2)
+            if nx.is_connected(G):
+                return G
 
     elif graph_type == "path":
         return nx.path_graph(n)
@@ -21,7 +25,8 @@ def generate_graph(graph_type, n):
 
     elif graph_type == "grid":
         side = int(n**0.5)
-        return nx.grid_2d_graph(side, side)
+        G = nx.grid_2d_graph(side, side)
+        return nx.convert_node_labels_to_integers(G)
 
     else:
         raise ValueError("Unknown graph type")
