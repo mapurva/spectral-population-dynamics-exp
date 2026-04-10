@@ -4,19 +4,32 @@ import matplotlib.pyplot as plt
 from scipy.stats import linregress
 import os
 
-# Create output folders
+# ----------------------------
+# SETUP
+# ----------------------------
 os.makedirs("data/analysis", exist_ok=True)
 os.makedirs("figures", exist_ok=True)
 
-# Load data
-df = pd.read_csv("data/results_with_resistance.csv")
+# ----------------------------
+# LOAD DATA (FIXED)
+# ----------------------------
+try:
+    df = pd.read_csv("data/results_with_resistance.csv")
+except FileNotFoundError:
+    raise FileNotFoundError("Run experiments first: results_with_resistance.csv not found")
 
-# Clean
+# Clean data
 df = df.dropna()
-df = df[(df["mean_fixation"] > 0) & (df["lambda2"] > 0) & (df["kirchhoff"] > 0)]
+df = df[
+    (df["mean_fixation"] > 0) &
+    (df["lambda2"] > 0) &
+    (df["kirchhoff"] > 0)
+]
+
+print(f"Loaded {len(df)} valid rows")
 
 # ----------------------------
-# Regression with CI
+# REGRESSION WITH CI
 # ----------------------------
 def regression_with_ci(x, y):
     x_log = np.log(x)
@@ -32,18 +45,16 @@ def regression_with_ci(x, y):
 
 
 # ----------------------------
-# STORE RESULTS
+# SAVE ANALYSIS TABLE
 # ----------------------------
 records = []
 
-# Global models
+# Global
 for name, x in {
     "lambda2": df["lambda2"],
     "kirchhoff": df["kirchhoff"]
 }.items():
-
     alpha, r2, p, ci_low, ci_high = regression_with_ci(x, df["mean_fixation"])
-
     records.append({
         "graph": "GLOBAL",
         "model": name,
@@ -54,7 +65,7 @@ for name, x in {
         "ci_high": ci_high
     })
 
-# Per graph models
+# Per graph
 for g in df["graph"].unique():
     sub = df[df["graph"] == g]
 
@@ -65,9 +76,7 @@ for g in df["graph"].unique():
         "lambda2": sub["lambda2"],
         "kirchhoff": sub["kirchhoff"]
     }.items():
-
         alpha, r2, p, ci_low, ci_high = regression_with_ci(x, sub["mean_fixation"])
-
         records.append({
             "graph": g,
             "model": name,
@@ -78,40 +87,67 @@ for g in df["graph"].unique():
             "ci_high": ci_high
         })
 
-# Save results
 results_df = pd.DataFrame(records)
 results_df.to_csv("data/analysis/analysis_results.csv", index=False)
 
 print("Saved: data/analysis/analysis_results.csv")
 
 # ----------------------------
-# PLOTTING (PAPER READY)
+# PLOTTING (FIXED + IMPROVED)
 # ----------------------------
 
-# GLOBAL COMPARISON PLOT
-plt.figure(figsize=(6,5))
+plt.rcParams.update({
+    "font.size": 12,
+    "axes.titlesize": 12,
+    "axes.labelsize": 11
+})
 
-plt.scatter(np.log(df["lambda2"]), np.log(df["mean_fixation"]), label="λ2", alpha=0.7)
-plt.scatter(np.log(df["kirchhoff"]), np.log(df["mean_fixation"]), label="Kirchhoff", alpha=0.7)
+# Helper: regression line + R²
+def add_regression(ax, x, y):
+    x_log = np.log(x)
+    y_log = np.log(y)
 
-plt.xlabel("log(Structural Metric)")
-plt.ylabel("log(Fixation Time)")
-plt.title("Global Comparison: Spectral Gap vs Resistance")
-plt.legend()
-plt.grid(True)
+    slope, intercept = np.polyfit(x_log, y_log, 1)
+    r = np.corrcoef(x_log, y_log)[0, 1]
+    r2 = r**2
+
+    x_line = np.linspace(x_log.min(), x_log.max(), 100)
+    y_line = slope * x_line + intercept
+
+    ax.plot(x_line, y_line, linestyle="--")
+    ax.text(0.05, 0.9, f"$R^2$={r2:.2f}", transform=ax.transAxes)
+
+
+# ----------------------------
+# GLOBAL SPLIT FIGURE
+# ----------------------------
+fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+
+# λ2
+axes[0].scatter(np.log(df["lambda2"]), np.log(df["mean_fixation"]))
+add_regression(axes[0], df["lambda2"], df["mean_fixation"])
+axes[0].set_xlabel("log(λ₂)")
+axes[0].set_ylabel("log(Fixation Time)")
+axes[0].set_title("(a) Spectral Gap")
+
+# Kirchhoff
+axes[1].scatter(np.log(df["kirchhoff"]), np.log(df["mean_fixation"]))
+add_regression(axes[1], df["kirchhoff"], df["mean_fixation"])
+axes[1].set_xlabel("log(Kirchhoff Index)")
+axes[1].set_ylabel("log(Fixation Time)")
+axes[1].set_title("(b) Effective Resistance")
 
 plt.tight_layout()
-plt.savefig("figures/global_comparison.pdf", dpi=300)
-plt.savefig("figures/global_comparison.png", dpi=300)
+plt.savefig("figures/global_split.pdf", dpi=300)
+plt.savefig("figures/global_split.png", dpi=300)
+plt.close()
 
 # ----------------------------
-# MULTI-PANEL (λ2)
+# MULTI-PANEL λ2
 # ----------------------------
 graphs = df["graph"].unique()
-n = len(graphs)
-
 cols = 3
-rows = int(np.ceil(n / cols))
+rows = int(np.ceil(len(graphs) / cols))
 
 fig, axes = plt.subplots(rows, cols, figsize=(12, 8))
 axes = axes.flatten()
@@ -119,21 +155,27 @@ axes = axes.flatten()
 for i, g in enumerate(graphs):
     sub = df[df["graph"] == g]
 
-    axes[i].scatter(np.log(sub["lambda2"]), np.log(sub["mean_fixation"]))
-    axes[i].set_title(g)
-    axes[i].set_xlabel("log(λ2)")
-    axes[i].set_ylabel("log(T)")
+    x = sub["lambda2"]
+    y = sub["mean_fixation"]
 
-# remove empty axes
-for j in range(i+1, len(axes)):
+    ax = axes[i]
+    ax.scatter(np.log(x), np.log(y))
+    add_regression(ax, x, y)
+
+    ax.set_title(g)
+    ax.set_xlabel("log(λ₂)")
+    ax.set_ylabel("log(T)")
+
+for j in range(i + 1, len(axes)):
     fig.delaxes(axes[j])
 
 plt.tight_layout()
-plt.savefig("figures/lambda_panels.pdf", dpi=300)
-plt.savefig("figures/lambda_panels.png", dpi=300)
+plt.savefig("figures/lambda_panels_refined.pdf", dpi=300)
+plt.savefig("figures/lambda_panels_refined.png", dpi=300)
+plt.close()
 
 # ----------------------------
-# MULTI-PANEL (Kirchhoff)
+# MULTI-PANEL KIRCHHOFF
 # ----------------------------
 fig, axes = plt.subplots(rows, cols, figsize=(12, 8))
 axes = axes.flatten()
@@ -141,16 +183,23 @@ axes = axes.flatten()
 for i, g in enumerate(graphs):
     sub = df[df["graph"] == g]
 
-    axes[i].scatter(np.log(sub["kirchhoff"]), np.log(sub["mean_fixation"]))
-    axes[i].set_title(g)
-    axes[i].set_xlabel("log(Kirchhoff)")
-    axes[i].set_ylabel("log(T)")
+    x = sub["kirchhoff"]
+    y = sub["mean_fixation"]
 
-for j in range(i+1, len(axes)):
+    ax = axes[i]
+    ax.scatter(np.log(x), np.log(y))
+    add_regression(ax, x, y)
+
+    ax.set_title(g)
+    ax.set_xlabel("log(Kirchhoff)")
+    ax.set_ylabel("log(T)")
+
+for j in range(i + 1, len(axes)):
     fig.delaxes(axes[j])
 
 plt.tight_layout()
-plt.savefig("figures/kirchhoff_panels.pdf", dpi=300)
-plt.savefig("figures/kirchhoff_panels.png", dpi=300)
+plt.savefig("figures/kirchhoff_panels_refined.pdf", dpi=300)
+plt.savefig("figures/kirchhoff_panels_refined.png", dpi=300)
+plt.close()
 
-print("Figures saved in /figures/")
+print("All refined figures saved in /figures/")
