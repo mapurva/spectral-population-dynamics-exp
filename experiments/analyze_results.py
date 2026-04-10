@@ -2,6 +2,11 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import linregress
+import os
+
+# Create output folders
+os.makedirs("data/analysis", exist_ok=True)
+os.makedirs("figures", exist_ok=True)
 
 # Load data
 df = pd.read_csv("data/results_with_resistance.csv")
@@ -11,7 +16,7 @@ df = df.dropna()
 df = df[(df["mean_fixation"] > 0) & (df["lambda2"] > 0) & (df["kirchhoff"] > 0)]
 
 # ----------------------------
-# Helper: regression with CI
+# Regression with CI
 # ----------------------------
 def regression_with_ci(x, y):
     x_log = np.log(x)
@@ -23,89 +28,129 @@ def regression_with_ci(x, y):
     ci_low = alpha - 1.96 * stderr
     ci_high = alpha + 1.96 * stderr
 
-    return {
-        "alpha": alpha,
-        "r2": r**2,
-        "p": p,
-        "ci": (ci_low, ci_high)
-    }
+    return alpha, r**2, p, ci_low, ci_high
+
 
 # ----------------------------
-# GLOBAL MODELS
+# STORE RESULTS
 # ----------------------------
-print("\n=== GLOBAL MODELS ===")
+records = []
 
-models = {
+# Global models
+for name, x in {
     "lambda2": df["lambda2"],
     "kirchhoff": df["kirchhoff"]
-}
+}.items():
 
-for name, x in models.items():
-    res = regression_with_ci(x, df["mean_fixation"])
-    print(f"\nModel: {name}")
-    print(res)
+    alpha, r2, p, ci_low, ci_high = regression_with_ci(x, df["mean_fixation"])
 
-# ----------------------------
-# PER GRAPH ANALYSIS
-# ----------------------------
-print("\n=== PER GRAPH ANALYSIS ===")
+    records.append({
+        "graph": "GLOBAL",
+        "model": name,
+        "alpha": alpha,
+        "r2": r2,
+        "p_value": p,
+        "ci_low": ci_low,
+        "ci_high": ci_high
+    })
 
-results = {}
-
+# Per graph models
 for g in df["graph"].unique():
     sub = df[df["graph"] == g]
 
     if len(sub) < 3:
         continue
 
-    res_lambda = regression_with_ci(sub["lambda2"], sub["mean_fixation"])
-    res_kirchhoff = regression_with_ci(sub["kirchhoff"], sub["mean_fixation"])
+    for name, x in {
+        "lambda2": sub["lambda2"],
+        "kirchhoff": sub["kirchhoff"]
+    }.items():
 
-    results[g] = {
-        "lambda2": res_lambda,
-        "kirchhoff": res_kirchhoff
-    }
+        alpha, r2, p, ci_low, ci_high = regression_with_ci(x, sub["mean_fixation"])
 
-    print(f"\nGraph: {g}")
-    print("λ2:", res_lambda)
-    print("Kirchhoff:", res_kirchhoff)
+        records.append({
+            "graph": g,
+            "model": name,
+            "alpha": alpha,
+            "r2": r2,
+            "p_value": p,
+            "ci_low": ci_low,
+            "ci_high": ci_high
+        })
+
+# Save results
+results_df = pd.DataFrame(records)
+results_df.to_csv("data/analysis/analysis_results.csv", index=False)
+
+print("Saved: data/analysis/analysis_results.csv")
 
 # ----------------------------
-# PLOTTING
+# PLOTTING (PAPER READY)
 # ----------------------------
 
-# 1. Global scatter
-plt.figure()
-plt.scatter(np.log(df["lambda2"]), np.log(df["mean_fixation"]))
-plt.xlabel("log(lambda2)")
-plt.ylabel("log(fixation time)")
-plt.title("Global: λ2 vs Fixation Time")
-plt.show()
+# GLOBAL COMPARISON PLOT
+plt.figure(figsize=(6,5))
 
-# 2. Per graph plots
-for g in df["graph"].unique():
+plt.scatter(np.log(df["lambda2"]), np.log(df["mean_fixation"]), label="λ2", alpha=0.7)
+plt.scatter(np.log(df["kirchhoff"]), np.log(df["mean_fixation"]), label="Kirchhoff", alpha=0.7)
+
+plt.xlabel("log(Structural Metric)")
+plt.ylabel("log(Fixation Time)")
+plt.title("Global Comparison: Spectral Gap vs Resistance")
+plt.legend()
+plt.grid(True)
+
+plt.tight_layout()
+plt.savefig("figures/global_comparison.pdf", dpi=300)
+plt.savefig("figures/global_comparison.png", dpi=300)
+
+# ----------------------------
+# MULTI-PANEL (λ2)
+# ----------------------------
+graphs = df["graph"].unique()
+n = len(graphs)
+
+cols = 3
+rows = int(np.ceil(n / cols))
+
+fig, axes = plt.subplots(rows, cols, figsize=(12, 8))
+axes = axes.flatten()
+
+for i, g in enumerate(graphs):
     sub = df[df["graph"] == g]
 
-    if len(sub) < 3:
-        continue
+    axes[i].scatter(np.log(sub["lambda2"]), np.log(sub["mean_fixation"]))
+    axes[i].set_title(g)
+    axes[i].set_xlabel("log(λ2)")
+    axes[i].set_ylabel("log(T)")
 
-    plt.figure()
-    plt.scatter(np.log(sub["lambda2"]), np.log(sub["mean_fixation"]))
-    plt.xlabel("log(lambda2)")
-    plt.ylabel("log(fixation time)")
-    plt.title(f"{g}: λ2 vs Fixation Time")
-    plt.show()
+# remove empty axes
+for j in range(i+1, len(axes)):
+    fig.delaxes(axes[j])
 
-# 3. Kirchhoff plots
-for g in df["graph"].unique():
+plt.tight_layout()
+plt.savefig("figures/lambda_panels.pdf", dpi=300)
+plt.savefig("figures/lambda_panels.png", dpi=300)
+
+# ----------------------------
+# MULTI-PANEL (Kirchhoff)
+# ----------------------------
+fig, axes = plt.subplots(rows, cols, figsize=(12, 8))
+axes = axes.flatten()
+
+for i, g in enumerate(graphs):
     sub = df[df["graph"] == g]
 
-    if len(sub) < 3:
-        continue
+    axes[i].scatter(np.log(sub["kirchhoff"]), np.log(sub["mean_fixation"]))
+    axes[i].set_title(g)
+    axes[i].set_xlabel("log(Kirchhoff)")
+    axes[i].set_ylabel("log(T)")
 
-    plt.figure()
-    plt.scatter(np.log(sub["kirchhoff"]), np.log(sub["mean_fixation"]))
-    plt.xlabel("log(Kirchhoff)")
-    plt.ylabel("log(fixation time)")
-    plt.title(f"{g}: Kirchhoff vs Fixation Time")
-    plt.show()
+for j in range(i+1, len(axes)):
+    fig.delaxes(axes[j])
+
+plt.tight_layout()
+plt.savefig("figures/kirchhoff_panels.pdf", dpi=300)
+plt.savefig("figures/kirchhoff_panels.png", dpi=300)
+
+print("Figures saved in /figures/")
