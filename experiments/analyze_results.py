@@ -22,13 +22,21 @@ sns.set_theme(style="whitegrid")
 # -------------------------------
 df = pd.read_csv(DATA_FILE)
 
-# Clean data
 df = df[(df["lambda2"] > 0) & (df["mean_fixation"] > 0) & (df["kirchhoff"] > 0)]
 
 # Log transforms
 df["log_lambda2"] = np.log(df["lambda2"])
 df["log_kf"] = np.log(df["kirchhoff"])
 df["log_T"] = np.log(df["mean_fixation"])
+
+print(f"Loaded {len(df)} valid samples")
+
+# -------------------------------
+# GLOBAL AXIS LIMITS
+# -------------------------------
+lambda_xlim = (df["log_lambda2"].min(), df["log_lambda2"].max())
+kf_xlim = (df["log_kf"].min(), df["log_kf"].max())
+ylim = (df["log_T"].min(), df["log_T"].max())
 
 # -------------------------------
 # 1. GLOBAL ANALYSIS
@@ -53,16 +61,21 @@ sns.scatterplot(
     ax=ax
 )
 
-ax.plot(x, intercept + slope * x, linestyle='--', color='black')
+# sorted regression line
+idx = np.argsort(x)
+ax.plot(x.iloc[idx], (intercept + slope * x).iloc[idx],
+        linestyle='--', color='black')
 
 ax.set_title("(a) Spectral Gap")
 ax.set_xlabel(r"$\log(\lambda_2)$")
 ax.set_ylabel(r"$\log(T_{fix})$")
+ax.set_xlim(lambda_xlim)
+ax.set_ylim(ylim)
 
 ax.text(
     0.05, 0.95,
     f"$R^2 = {r_value**2:.2f}$\n"
-    f"$T \\propto \\lambda_2^{{{slope:.2f}}}$",
+    f"slope = {slope:.2f}",
     transform=ax.transAxes,
     verticalalignment='top'
 )
@@ -84,23 +97,29 @@ sns.scatterplot(
     ax=ax
 )
 
-ax.plot(x, intercept + slope * x, linestyle='--', color='black')
+idx = np.argsort(x)
+ax.plot(x.iloc[idx], (intercept + slope * x).iloc[idx],
+        linestyle='--', color='black')
 
 ax.set_title("(b) Effective Resistance")
 ax.set_xlabel(r"$\log(K_f)$")
 ax.set_ylabel(r"$\log(T_{fix})$")
+ax.set_xlim(kf_xlim)
+ax.set_ylim(ylim)
+
+ax.legend(loc="lower right", fontsize=8)
 
 ax.text(
     0.05, 0.95,
     f"$R^2 = {r_value**2:.2f}$\n"
-    f"$T \\propto K_f^{{{slope:.2f}}}$",
+    f"slope = {slope:.2f}",
     transform=ax.transAxes,
     verticalalignment='top'
 )
 
 plt.tight_layout()
-plt.savefig(os.path.join(OUTPUT_DIR, "global_analysis.png"), bbox_inches='tight')
 plt.savefig(os.path.join(OUTPUT_DIR, "global_analysis.pdf"), bbox_inches='tight')
+plt.savefig(os.path.join(OUTPUT_DIR, "global_analysis.png"), bbox_inches='tight')
 plt.close()
 
 # -------------------------------
@@ -119,34 +138,41 @@ for i, g in enumerate(graphs):
         ax.set_visible(False)
         continue
 
-    x = np.log(sub["kirchhoff"])
-    y = np.log(sub["mean_fixation"])
+    x = sub["log_kf"]
+    y = sub["log_T"]
 
     slope, intercept, r_value, _, _ = linregress(x, y)
 
     ax.scatter(x, y, s=50, edgecolor='black')
-    ax.plot(x, intercept + slope * x, linestyle='--', color='black')
 
-    ax.set_title(g)
+    idx = np.argsort(x)
+    ax.plot(x.iloc[idx], (intercept + slope * x).iloc[idx],
+            linestyle='--', color='black')
+
+    ax.set_title(f"{g} (n=20–120)")
+    ax.set_xlabel(r"$\log(K_f)$")
+    ax.set_ylabel(r"$\log(T_{fix})$")
+    ax.set_xlim(kf_xlim)
+    ax.set_ylim(ylim)
 
     ax.text(
         0.05, 0.9,
         f"$R^2={r_value**2:.2f}$\n"
-        f"$\\alpha={slope:.2f}$",
+        f"slope={slope:.2f}",
         transform=ax.transAxes,
         fontsize=9
     )
 
-    ax.set_xlabel(r"$\log(K_f)$")
-    ax.set_ylabel(r"$\log(T_{fix})$")
+for j in range(i + 1, len(axes)):
+    fig.delaxes(axes[j])
 
 plt.tight_layout()
-plt.savefig(os.path.join(OUTPUT_DIR, "per_graph_analysis.png"), bbox_inches='tight')
 plt.savefig(os.path.join(OUTPUT_DIR, "per_graph_analysis.pdf"), bbox_inches='tight')
+plt.savefig(os.path.join(OUTPUT_DIR, "per_graph_analysis.png"), bbox_inches='tight')
 plt.close()
 
 # -------------------------------
-# 3. ⭐ COMBINED MODEL (MAIN RESULT)
+# 3. COMBINED MODEL (MAIN RESULT)
 # -------------------------------
 X = df[["log_kf", "log_lambda2"]]
 y = df["log_T"]
@@ -161,12 +187,18 @@ y_pred = model.predict(X)
 
 plt.figure(figsize=(6, 6), dpi=300)
 
-plt.scatter(y, y_pred, s=60, edgecolor='black')
+sns.scatterplot(
+    x=y,
+    y=y_pred,
+    hue=df["graph"],
+    s=60,
+    edgecolor='black'
+)
 
-# Perfect fit line
 min_val = min(y.min(), y_pred.min())
 max_val = max(y.max(), y_pred.max())
-plt.plot([min_val, max_val], [min_val, max_val], linestyle='--')
+
+plt.plot([min_val, max_val], [min_val, max_val], linestyle='--', color='black')
 
 plt.xlabel(r"Actual $\log(T_{fix})$")
 plt.ylabel(r"Predicted $\log(T_{fix})$")
@@ -175,14 +207,14 @@ plt.title("Combined Spectral-Resistance Model")
 plt.text(
     0.05, 0.95,
     f"$R^2 = {r2:.2f}$\n"
-    f"$T \\propto K_f^{{{coef_kf:.2f}}} \\lambda_2^{{{coef_lambda:.2f}}}$",
+    f"$\\log T = {coef_kf:.2f} \\log K_f + {coef_lambda:.2f} \\log \\lambda_2$",
     transform=plt.gca().transAxes,
     verticalalignment='top'
 )
 
 plt.tight_layout()
-plt.savefig(os.path.join(OUTPUT_DIR, "combined_model.png"), bbox_inches='tight')
 plt.savefig(os.path.join(OUTPUT_DIR, "combined_model.pdf"), bbox_inches='tight')
+plt.savefig(os.path.join(OUTPUT_DIR, "combined_model.png"), bbox_inches='tight')
 plt.close()
 
 # -------------------------------
