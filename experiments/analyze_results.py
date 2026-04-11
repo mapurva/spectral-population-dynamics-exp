@@ -1,205 +1,187 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.stats import linregress
+import seaborn as sns
 import os
+from scipy.stats import linregress
+from sklearn.linear_model import LinearRegression
 
-# ----------------------------
-# SETUP
-# ----------------------------
-os.makedirs("data/analysis", exist_ok=True)
-os.makedirs("figures", exist_ok=True)
+# -------------------------------
+# CONFIG
+# -------------------------------
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+RESULT_FILE = os.path.join(BASE_DIR, "data", "results_with_resistance.csv")   # make sure this exists
+OUTPUT_DIR = "figures"
 
-# ----------------------------
-# LOAD DATA (FIXED)
-# ----------------------------
-try:
-    df = pd.read_csv("data/results_with_resistance.csv")
-except FileNotFoundError:
-    raise FileNotFoundError("Run experiments first: results_with_resistance.csv not found")
+sns.set_theme(style="whitegrid")
 
-# Clean data
-df = df.dropna()
-df = df[
-    (df["mean_fixation"] > 0) &
-    (df["lambda2"] > 0) &
-    (df["kirchhoff"] > 0)
-]
+# -------------------------------
+# LOAD DATA
+# -------------------------------
+df = pd.read_csv(RESULT_FILE)
 
-print(f"Loaded {len(df)} valid rows")
+# Basic cleaning
+df = df[(df["lambda2"] > 0) & (df["mean_fixation"] > 0)]
 
-# ----------------------------
-# REGRESSION WITH CI
-# ----------------------------
-def regression_with_ci(x, y):
-    x_log = np.log(x)
-    y_log = np.log(y)
+# Log transforms
+df["log_lambda2"] = np.log(df["lambda2"])
+df["log_kf"] = np.log(df["kirchhoff"])
+df["log_T"] = np.log(df["mean_fixation"])
 
-    slope, intercept, r, p, stderr = linregress(x_log, y_log)
+# -------------------------------
+# CREATE OUTPUT DIR
+# -------------------------------
+import os
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    alpha = -slope
-    ci_low = alpha - 1.96 * stderr
-    ci_high = alpha + 1.96 * stderr
+# -------------------------------
+# 1. GLOBAL PLOTS
+# -------------------------------
+fig, axes = plt.subplots(1, 2, figsize=(12, 5), dpi=300)
 
-    return alpha, r**2, p, ci_low, ci_high
+# ---- λ2 plot ----
+ax = axes[0]
+x = df["log_lambda2"]
+y = df["log_T"]
 
+slope, intercept, r_value, _, _ = linregress(x, y)
 
-# ----------------------------
-# SAVE ANALYSIS TABLE
-# ----------------------------
-records = []
+sns.scatterplot(data=df, x="log_lambda2", y="log_T",
+                hue="graph", style="graph", ax=ax, s=60, legend=False)
 
-# Global
-for name, x in {
-    "lambda2": df["lambda2"],
-    "kirchhoff": df["kirchhoff"]
-}.items():
-    alpha, r2, p, ci_low, ci_high = regression_with_ci(x, df["mean_fixation"])
-    records.append({
-        "graph": "GLOBAL",
-        "model": name,
-        "alpha": alpha,
-        "r2": r2,
-        "p_value": p,
-        "ci_low": ci_low,
-        "ci_high": ci_high
-    })
+ax.plot(x, intercept + slope * x, linestyle='--', color='black')
 
-# Per graph
-for g in df["graph"].unique():
+ax.set_title("(a) Spectral Gap", fontsize=12)
+ax.set_xlabel(r"$\log(\lambda_2)$")
+ax.set_ylabel(r"$\log(T_{fix})$")
+
+ax.text(
+    0.05, 0.95,
+    f"$R^2 = {r_value**2:.2f}$\n"
+    f"$T \\sim \\lambda_2^{{{slope:.2f}}}$",
+    transform=ax.transAxes,
+    verticalalignment='top'
+)
+
+# ---- Kirchhoff plot ----
+ax = axes[1]
+x = df["log_kf"]
+y = df["log_T"]
+
+slope, intercept, r_value, _, _ = linregress(x, y)
+
+sns.scatterplot(data=df, x="log_kf", y="log_T",
+                hue="graph", style="graph", ax=ax, s=60)
+
+ax.plot(x, intercept + slope * x, linestyle='--', color='black')
+
+ax.set_title("(b) Effective Resistance", fontsize=12)
+ax.set_xlabel(r"$\log(K_f)$")
+ax.set_ylabel(r"$\log(T_{fix})$")
+
+ax.text(
+    0.05, 0.95,
+    f"$R^2 = {r_value**2:.2f}$\n"
+    f"$T \\sim K_f^{{{slope:.2f}}}$",
+    transform=ax.transAxes,
+    verticalalignment='top'
+)
+
+plt.tight_layout()
+plt.savefig(f"{OUTPUT_DIR}/global_analysis.png", bbox_inches='tight')
+plt.close()
+
+# -------------------------------
+# 2. PER-GRAPH PANELS
+# -------------------------------
+graphs = df["graph"].unique()
+
+fig, axes = plt.subplots(2, 3, figsize=(14, 8), dpi=300)
+axes = axes.flatten()
+
+for i, g in enumerate(graphs):
+    ax = axes[i]
     sub = df[df["graph"] == g]
 
-    if len(sub) < 3:
+    # Skip degenerate cases
+    if sub["kirchhoff"].nunique() < 2:
+        ax.set_visible(False)
         continue
 
-    for name, x in {
-        "lambda2": sub["lambda2"],
-        "kirchhoff": sub["kirchhoff"]
-    }.items():
-        alpha, r2, p, ci_low, ci_high = regression_with_ci(x, sub["mean_fixation"])
-        records.append({
-            "graph": g,
-            "model": name,
-            "alpha": alpha,
-            "r2": r2,
-            "p_value": p,
-            "ci_low": ci_low,
-            "ci_high": ci_high
-        })
+    x = np.log(sub["kirchhoff"])
+    y = np.log(sub["mean_fixation"])
 
-results_df = pd.DataFrame(records)
-results_df.to_csv("data/analysis/analysis_results.csv", index=False)
+    slope, intercept, r_value, _, _ = linregress(x, y)
 
-print("Saved: data/analysis/analysis_results.csv")
+    ax.scatter(x, y, s=50, edgecolor='black')
+    ax.plot(x, intercept + slope * x, linestyle='--', color='black')
 
-# ----------------------------
-# PLOTTING (FIXED + IMPROVED)
-# ----------------------------
+    ax.set_title(f"{g}", fontsize=11)
 
-plt.rcParams.update({
-    "font.size": 12,
-    "axes.titlesize": 12,
-    "axes.labelsize": 11
-})
+    ax.text(
+        0.05, 0.9,
+        f"$R^2={r_value**2:.2f}$\n"
+        f"$\\alpha={slope:.2f}$",
+        transform=ax.transAxes,
+        fontsize=9
+    )
 
-# Helper: regression line + R²
-def add_regression(ax, x, y):
-    x_log = np.log(x)
-    y_log = np.log(y)
-
-    slope, intercept = np.polyfit(x_log, y_log, 1)
-    r = np.corrcoef(x_log, y_log)[0, 1]
-    r2 = r**2
-
-    x_line = np.linspace(x_log.min(), x_log.max(), 100)
-    y_line = slope * x_line + intercept
-
-    ax.plot(x_line, y_line, linestyle="--")
-    ax.text(0.05, 0.9, f"$R^2$={r2:.2f}", transform=ax.transAxes)
-
-
-# ----------------------------
-# GLOBAL SPLIT FIGURE
-# ----------------------------
-fig, axes = plt.subplots(1, 2, figsize=(10, 4))
-
-# λ2
-axes[0].scatter(np.log(df["lambda2"]), np.log(df["mean_fixation"]))
-add_regression(axes[0], df["lambda2"], df["mean_fixation"])
-axes[0].set_xlabel("log(λ₂)")
-axes[0].set_ylabel("log(Fixation Time)")
-axes[0].set_title("(a) Spectral Gap")
-
-# Kirchhoff
-axes[1].scatter(np.log(df["kirchhoff"]), np.log(df["mean_fixation"]))
-add_regression(axes[1], df["kirchhoff"], df["mean_fixation"])
-axes[1].set_xlabel("log(Kirchhoff Index)")
-axes[1].set_ylabel("log(Fixation Time)")
-axes[1].set_title("(b) Effective Resistance")
+    ax.set_xlabel(r"$\log(K_f)$")
+    ax.set_ylabel(r"$\log(T)$")
 
 plt.tight_layout()
-plt.savefig("figures/global_split.pdf", dpi=300)
-plt.savefig("figures/global_split.png", dpi=300)
+plt.savefig(f"{OUTPUT_DIR}/per_graph_analysis.png", bbox_inches='tight')
 plt.close()
 
-# ----------------------------
-# MULTI-PANEL λ2
-# ----------------------------
-graphs = df["graph"].unique()
-cols = 3
-rows = int(np.ceil(len(graphs) / cols))
+# -------------------------------
+# 3. ⭐ COMBINED MODEL (MAIN RESULT)
+# -------------------------------
 
-fig, axes = plt.subplots(rows, cols, figsize=(12, 8))
-axes = axes.flatten()
+# Model: log(T) = a*log(Kf) + b*log(lambda2) + c
+X = df[["log_kf", "log_lambda2"]]
+y = df["log_T"]
 
-for i, g in enumerate(graphs):
-    sub = df[df["graph"] == g]
+model = LinearRegression()
+model.fit(X, y)
 
-    x = sub["lambda2"]
-    y = sub["mean_fixation"]
+r2 = model.score(X, y)
+coef_kf, coef_lambda = model.coef_
+intercept = model.intercept_
 
-    ax = axes[i]
-    ax.scatter(np.log(x), np.log(y))
-    add_regression(ax, x, y)
+# Predictions
+y_pred = model.predict(X)
 
-    ax.set_title(g)
-    ax.set_xlabel("log(λ₂)")
-    ax.set_ylabel("log(T)")
+# Plot predicted vs actual
+plt.figure(figsize=(6, 6), dpi=300)
 
-for j in range(i + 1, len(axes)):
-    fig.delaxes(axes[j])
+plt.scatter(y, y_pred, s=60, edgecolor='black')
+
+# Perfect fit line
+min_val = min(y.min(), y_pred.min())
+max_val = max(y.max(), y_pred.max())
+plt.plot([min_val, max_val], [min_val, max_val], linestyle='--')
+
+plt.xlabel(r"Actual $\log(T)$")
+plt.ylabel(r"Predicted $\log(T)$")
+plt.title("Combined Spectral Model")
+
+plt.text(
+    0.05, 0.95,
+    f"$R^2 = {r2:.2f}$\n"
+    f"$T \\sim K_f^{{{coef_kf:.2f}}} \\cdot \\lambda_2^{{{coef_lambda:.2f}}}$",
+    transform=plt.gca().transAxes,
+    verticalalignment='top'
+)
 
 plt.tight_layout()
-plt.savefig("figures/lambda_panels_refined.pdf", dpi=300)
-plt.savefig("figures/lambda_panels_refined.png", dpi=300)
+plt.savefig(f"{OUTPUT_DIR}/combined_model.png", bbox_inches='tight')
 plt.close()
 
-# ----------------------------
-# MULTI-PANEL KIRCHHOFF
-# ----------------------------
-fig, axes = plt.subplots(rows, cols, figsize=(12, 8))
-axes = axes.flatten()
-
-for i, g in enumerate(graphs):
-    sub = df[df["graph"] == g]
-
-    x = sub["kirchhoff"]
-    y = sub["mean_fixation"]
-
-    ax = axes[i]
-    ax.scatter(np.log(x), np.log(y))
-    add_regression(ax, x, y)
-
-    ax.set_title(g)
-    ax.set_xlabel("log(Kirchhoff)")
-    ax.set_ylabel("log(T)")
-
-for j in range(i + 1, len(axes)):
-    fig.delaxes(axes[j])
-
-plt.tight_layout()
-plt.savefig("figures/kirchhoff_panels_refined.pdf", dpi=300)
-plt.savefig("figures/kirchhoff_panels_refined.png", dpi=300)
-plt.close()
-
-print("All refined figures saved in /figures/")
+# -------------------------------
+# PRINT MODEL SUMMARY
+# -------------------------------
+print("\n===== COMBINED MODEL =====")
+print(f"R^2: {r2:.4f}")
+print(f"Coefficient (log Kf): {coef_kf:.4f}")
+print(f"Coefficient (log lambda2): {coef_lambda:.4f}")
+print(f"Intercept: {intercept:.4f}")
