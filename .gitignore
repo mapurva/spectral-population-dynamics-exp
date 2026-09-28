@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual environment
+.venv/
+
+# Environment / secrets
+.env
+
+# Generated experimental data
+data/*.csv
+data/**/*.csv
+
+# Generated figures
+figures/*.png
+figures/*.pdf
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
