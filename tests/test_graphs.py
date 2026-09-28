@@ -17,6 +17,8 @@ def test_erdos_renyi_reproducible_with_seed():
     assert G1.number_of_edges() == G2.number_of_edges()
     assert set(G1.edges()) == set(G2.edges())
 
+
+
 def test_barbell_is_connected():
     for n in [20, 30, 50, 80, 120]:
         G = generate_graph("barbell", n)
